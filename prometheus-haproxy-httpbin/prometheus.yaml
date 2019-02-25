@@ -1,0 +1,85 @@
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: main
+spec:
+  alerting:
+    alertmanagers:
+    - namespace: default
+      name: alertmanager-main
+      port: web
+  serviceAccountName: prometheus
+  serviceMonitorSelector:
+    matchLabels:
+      team: frontend
+  resources:
+    requests:
+      memory: 400Mi
+  ruleSelector:
+    matchLabels:
+      role: alert-rules
+  enableAdminAPI: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-main
+spec:
+  type: NodePort
+  ports:
+  - name: web
+    nodePort: 30900
+    port: 9090
+    protocol: TCP
+    targetPort: web
+  selector:
+    prometheus: main
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: haproxy-ingress.rules
+  labels:
+    role: alert-rules
+spec:
+  groups:
+  - name: haproxy-ingress.rules
+    rules:
+    # Alert if more than 1% of all HTTP responses (excluding redirects) are server errors (5xx)
+    - alert: HAProxyBackend5xxResponses
+      expr: >-
+        (
+          sum by (backend) (rate(haproxy_backend_http_responses_total{code=~"5..", backend!~"^error.+|^stats$"}[1m])
+          /
+          sum by (backend) (rate(haproxy_backend_http_responses_total{code!~"3..", backend!~"^error.+|^stats$"}[1m])
+        )
+        * 100 > 1
+      for: 5m
+      annotations:
+        description: >-
+          HAProxy: {{ $value }}% of requests to the {{ $labels.backend }}
+          service have been server errors (5xx codes) for the last 5 minutes
+      labels:
+        severity: warning
+#    # Alert if the average response time of all HTTP requests (averaged over the last 1024 requests) has been more than
+#    # 500ms for the last 5 mins. Also alert if the average has increased by 5% per minute for 5 mins, since if there are
+#    # fewer than 1024 requests a minute you won't get a true average until this many requests have been and gone.
+#    - alert: HAProxyBackendHighLatency
+#      expr: >-
+#        sum by (backend) (delta(haproxy_backend_http_response_time_average_seconds[1m])*100) > 5
+#        or sum by (backend) (haproxy_backend_http_response_time_average_seconds) > 0.5
+#      for: 5m
+#      annotations:
+#        description: >-
+#          HAProxy: Average HTTP response time of {{ $labels.backend }} service has exceeded 500ms for the last 5m.
+#      labels:
+#        severity: warning
+#    # Alert if a backend service is down for > 1m
+#    - alert: HAProxyBackendDown
+#      expr: haproxy_backend_up == 0
+#      for: 1m
+#      annotations:
+#        description: >-
+#          HAProxy: {{ $labels.backend }} service has been down for at least 1m
+#      labels:
+#        severity: critical
