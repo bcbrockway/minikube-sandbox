@@ -9,7 +9,7 @@ function get(func, data) {
 };
 
 export default function() {
-  get("status", "501");
-  get("status", "200");
-  get("delay", delay);
+  get("status", "403");
+//  get("status", "403");
+//  get("delay", delay);
 }
