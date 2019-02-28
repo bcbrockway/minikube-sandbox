@@ -10,7 +10,7 @@ spec:
   - name: haproxy-ingress.rules
     rules:
     # Frontend Session Usage (% of limit) | Warning
-    - alert: HAProxyFrontendSessionsUsage
+    - alert: HAProxyFrontendSessionUsage
       expr: >-
         sum by (frontend) (haproxy_frontend_current_sessions)
         / sum by (frontend) (haproxy_frontend_limit_sessions)
@@ -19,12 +19,10 @@ spec:
         severity: warning
       annotations:
         summary: "HAProxy: Session usage on {{ $labels.frontend }} frontend has reached {{ $value }}%"
-        description: >-
-          This alert will trigger when session usage is >= 80%.
         runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyFrontendSessionUsage
 
     # Frontend Session Usage (% of limit) | Critical
-    - alert: HAProxyFrontendSessionsUsage
+    - alert: HAProxyFrontendSessionUsage
       expr: >-
         sum by (frontend) (haproxy_frontend_current_sessions)
         / sum by (frontend) (haproxy_frontend_limit_sessions)
@@ -33,24 +31,160 @@ spec:
         severity: critical
       annotations:
         summary: "HAProxy: Session usage on {{ $labels.frontend }} frontend has reached {{ $value }}%"
-        description: >-
-          This alert will trigger when session usage is >= 90%.
         runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyFrontendSessionUsage
 
-    # Frontend Requests Denied (% increase) not required. No ACLs currently configured in HAProxy.
+    # Frontend Request Denied not required. No ACLs currently configured in HAProxy.
 
-    # Frontend Request Errors (% difference between 15m rate and 1m rate)
-    - alert: HAProxyFrontendRequestsErrors
+    # Frontend Request Errors (% difference between 1h rate and 1m rate) | Warning
+    - alert: HAProxyFrontendRequestErrors
       expr: >-
-        ( (
-            sum by (frontend) (rate(haproxy_frontend_request_errors_total[1m]) +1)
-            /
-            sum by (frontend) (rate(haproxy_frontend_request_errors_total[15m]) +1)
-          ) -1 ) * 100 > 2
-      for: 5m
+        sum by (frontend) (rate(haproxy_frontend_request_errors_total[1m])) / sum by (frontend) (rate(haproxy_frontend_request_errors_total[1h])) > 5
+      for: 3m
+      labels:
+        severity: warning
       annotations:
-        summary: >-
-          HAProxy: {{ $labels.frontend }} frontend experienced {{ $value }}% increase in client errors over the last 5
-          minutes
-        description: >-
-          blah blah blah
+        summary: "HAProxy: Request error rate increase detected on {{ $labels.frontend }} frontend"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyFrontendRequestErrors
+
+    # Frontend Request Errors (% difference between 1h rate and 1m rate) | Critical
+    - alert: HAProxyFrontendRequestErrors
+      expr: >-
+        sum by (frontend) (rate(haproxy_frontend_request_errors_total[1m])) / sum by (frontend) (rate(haproxy_frontend_request_errors_total[1h])) > 10
+      for: 3m
+      labels:
+        severity: critical
+      annotations:
+        summary: "HAProxy: Request error rate increase detected on {{ $labels.frontend }} frontend"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyFrontendRequestErrors
+
+    # No. of Request in Backend Queue | Warning
+    - alert: HAProxyBackendRequestQueued
+      expr: >-
+        sum by (backend) (haproxy_backend_current_queue) > 10
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "HAProxy: Request are queuing up on the {{ $labels.backend }} backend"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendRequestQueued
+
+    # No. of Request in Backend Queue | Critical
+    - alert: HAProxyBackendRequestQueued
+      expr: >-
+        sum by (backend) (haproxy_backend_current_queue) > 100
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "HAProxy: Request are queuing up on the {{ $labels.backend }} backend"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendRequestQueued
+
+    # Average Time Spent in Backend Queue | Warning
+    - alert: HAProxyBackendRequestQueuedTime
+      expr: >-
+        sum by (backend) (haproxy_backend_http_queue_time_average_seconds) > 0.1
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "HAProxy: Excessive request queue time on the {{ $labels.backend }} backend"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendRequestQueuedTime
+
+    # Average Time Spent in Backend Queue | Critical
+    - alert: HAProxyBackendRequestQueuedTime
+      expr: >-
+        sum by (backend) (haproxy_backend_http_queue_time_average_seconds) > 0.5
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "HAProxy: Excessive request queue time on the {{ $labels.backend }} backend"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendRequestQueuedTime
+
+    # Average Backend Response Time | Warning
+    - alert: HAProxyBackendResponseTime
+      expr: >-
+        sum by (backend) (delta(haproxy_backend_http_response_time_average_seconds[1m])*100) > 5
+        or haproxy_backend_http_response_time_average_seconds > 0.5
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "HAProxy: Average response times increased on {{ $labels.backend }} backend"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendResponseTime
+
+    # Average Backend Response Time | Critical
+    - alert: HAProxyBackendResponseTime
+      expr: >-
+        sum by (backend) (delta(haproxy_backend_http_response_time_average_seconds[1m])*100) > 10
+        or sum by (backend) (haproxy_backend_http_response_time_average_seconds) > 1
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "HAProxy: Average response times increased on {{ $labels.backend }} backend"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendResponseTime
+
+    # No. of Backend Response Errors | Warning
+    - alert: HAProxyBackendResponseErrors
+      expr: >-
+        sum by (backend) (rate(haproxy_backend_response_errors_total[1m])) > 1
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "HAProxy: Response errors detected on {{ $labels.backend }} backend"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendResponseErrors
+
+    # No. of Backend Response Errors | Critical
+    - alert: HAProxyBackendResponseErrors
+      expr: >-
+        sum by (backend) (rate(haproxy_backend_response_errors_total[1m])) > 10
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "HAProxy: Response errors detected on {{ $labels.backend }} backend"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendResponseErrors
+
+    # Percentage of HTTP responses that are server errors (5xx) | Warning
+    - alert: HAProxyBackendResponse5xxErrors
+      expr: >-
+        (
+          sum by (backend) (rate(haproxy_backend_http_responses_total{code=~"5..", backend!~"^error.+|^stats$"}[1m]))
+          /
+          sum by (backend) (rate(haproxy_backend_http_responses_total{code!~"3..", backend!~"^error.+|^stats$"}[1m]))
+        )
+        * 100 > 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "HAProxy: Increased number of 5xx responses on {{ $labels.backend }} service"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendResponse5xxErrors
+
+    # Percentage of HTTP responses that are server errors (5xx) | Critical
+    - alert: HAProxyBackendResponse5xxErrors
+      expr: >-
+        (
+          sum by (backend) (rate(haproxy_backend_http_responses_total{code=~"5..", backend!~"^error.+|^stats$"}[1m]))
+          /
+          sum by (backend) (rate(haproxy_backend_http_responses_total{code!~"3..", backend!~"^error.+|^stats$"}[1m]))
+        )
+        * 100 > 10
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "HAProxy: Increased number of 5xx responses on {{ $labels.backend }} service"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendResponse5xxErrors
+
+    # Alert if a backend service is down for > 1m
+    - alert: HAProxyBackendDown
+      expr: haproxy_backend_up == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        description: "HAProxy: {{ $labels.backend }} service has been down for at least 1m"
+        runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyBackendDown
