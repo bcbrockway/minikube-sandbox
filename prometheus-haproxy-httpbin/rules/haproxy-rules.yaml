@@ -1,14 +1,103 @@
----
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: haproxy-ingress.rules
   labels:
+    prometheus: k8s
     role: alert-rules
+  name: haproxy-ingress.rules
+  namespace: monitoring
 spec:
+# Info and advice obtained from https://www.datadoghq.com/blog/monitoring-haproxy-performance-metrics
   groups:
   - name: haproxy-ingress.rules
     rules:
+
+    # Join labels and register resultant datasets
+    - record: haproxy:http_backend_response_wait_seconds_bucket:labeled
+      expr: |
+        label_replace(
+          label_replace(http_backend_response_wait_seconds_bucket{backend!~"(error|stats|httpback|upstream).*"}, "joiner", "$1", "backend", "(.*)-\\d+$")
+            * on(joiner) group_left(label_app_kubernetes_io_owner)
+            label_join(kube_service_labels, "joiner", "-", "namespace", "service"),
+          "label_app_kubernetes_io_owner",
+          "satoshi",
+          "label_app_kubernetes_io_owner",
+          ""
+        )
+
+    - record: haproxy:http_backend_queue_time_seconds_bucket:labeled
+      expr: |
+        label_replace(
+          label_replace(http_backend_queue_time_seconds_bucket{backend!~"(error|stats|httpback|upstream).*"}, "joiner", "$1", "backend", "(.*)-\\d+$")
+            * on(joiner) group_left(label_app_kubernetes_io_owner)
+            label_join(kube_service_labels, "joiner", "-", "namespace", "service"),
+          "label_app_kubernetes_io_owner",
+          "satoshi",
+          "label_app_kubernetes_io_owner",
+          ""
+        )
+
+    - record: haproxy:haproxy_backend_current_queue:labeled
+      expr: |
+        label_replace(
+          label_replace(haproxy_backend_current_queue{backend!~"(error|stats|httpback|upstream).*"}, "joiner", "$1", "backend", "(.*)-\\d+$")
+            * on(joiner) group_left(label_app_kubernetes_io_owner)
+            label_join(kube_service_labels, "joiner", "-", "namespace", "service"),
+          "label_app_kubernetes_io_owner",
+          "satoshi",
+          "label_app_kubernetes_io_owner",
+          ""
+        )
+
+    - record: haproxy:haproxy_backend_response_errors_total:labeled
+      expr: |
+        label_replace(
+          label_replace(haproxy_backend_response_errors_total{backend!~"(error|stats|httpback|upstream).*"}, "joiner", "$1", "backend", "(.*)-\\d+$")
+            * on(joiner) group_left(label_app_kubernetes_io_owner)
+            label_join(kube_service_labels, "joiner", "-", "namespace", "service"),
+          "label_app_kubernetes_io_owner",
+          "satoshi",
+          "label_app_kubernetes_io_owner",
+          ""
+        )
+
+    - record: haproxy:haproxy_backend_http_responses_total:labeled
+      expr: |
+        label_replace(
+          label_replace(haproxy_backend_http_responses_total{backend!~"(error|stats|httpback|upstream).*"}, "joiner", "$1", "backend", "(.*)-\\d+$")
+            * on(joiner) group_left(label_app_kubernetes_io_owner)
+            label_join(kube_service_labels, "joiner", "-", "namespace", "service"),
+          "label_app_kubernetes_io_owner",
+          "satoshi",
+          "label_app_kubernetes_io_owner",
+          ""
+        )
+
+    - record: haproxy:haproxy_backend_up:labeled
+      expr: |
+        label_replace(
+          label_replace(haproxy_backend_up{backend!~"(error|stats|httpback|upstream).*"}, "joiner", "$1", "backend", "(.*)-\\d+$")
+            * on(joiner) group_left(label_app_kubernetes_io_owner)
+            label_join(kube_service_labels, "joiner", "-", "namespace", "service"),
+          "label_app_kubernetes_io_owner",
+          "satoshi",
+          "label_app_kubernetes_io_owner",
+          ""
+        )
+
+    # Set 95th percentiles for response time and queue wait time
+    - record: haproxy:http_backend_response_wait_seconds_bucket:histogram_quantile
+      expr: |
+        histogram_quantile(0.95, sum(rate(http_backend_response_wait_seconds_bucket[5m])) by (backend, le, label_app_kubernetes_io_owner))
+      labels:
+        quantile: "0.95"
+
+    - record: haproxy:http_backend_queue_time_seconds_bucket:histogram_quantile
+      expr: |
+        histogram_quantile(0.95, sum(rate(http_backend_queue_time_seconds_bucket[5m])) by (backend, le, label_app_kubernetes_io_owner))
+      labels:
+        quantile: "0.95"
+
     # Frontend Session Usage (% of limit) | Warning
     - alert: HAProxyFrontendSessionUsage
       expr: >-
@@ -35,10 +124,11 @@ spec:
 
     # Frontend Request Denied not required. No ACLs currently configured in HAProxy.
 
-    # Frontend Request Errors (% difference between 1h rate and 1m rate) | Warning
+    # Frontend Request Errors (% of total requests) | Warning
     - alert: HAProxyFrontendRequestErrors
       expr: >-
-        sum by (frontend) (rate(haproxy_frontend_request_errors_total[1m])) / sum by (frontend) (rate(haproxy_frontend_request_errors_total[1h])) > 5
+        sum by (frontend) (rate(haproxy_frontend_request_errors_total[1m]))
+        / sum by (frontend) (rate(haproxy_frontend_http_requests_total[1m])) * 100 > 1
       for: 3m
       labels:
         severity: warning
@@ -46,10 +136,11 @@ spec:
         summary: "HAProxy: Request error rate increase detected on {{ $labels.frontend }} frontend"
         runbook_url: https://gitlab.com/mintel/satoshi/monitoring/runbooks/blob/master/satoshi/platform/HAProxy.md#HAProxyFrontendRequestErrors
 
-    # Frontend Request Errors (% difference between 1h rate and 1m rate) | Critical
+    # Frontend Request Errors (% of total requests) | Critical
     - alert: HAProxyFrontendRequestErrors
       expr: >-
-        sum by (frontend) (rate(haproxy_frontend_request_errors_total[1m])) / sum by (frontend) (rate(haproxy_frontend_request_errors_total[1h])) > 10
+        sum by (frontend) (rate(haproxy_frontend_request_errors_total[1m]))
+        / sum by (frontend) (rate(haproxy_frontend_http_requests_total[1m])) * 100 > 5
       for: 3m
       labels:
         severity: critical
@@ -60,7 +151,7 @@ spec:
     # No. of Request in Backend Queue | Warning
     - alert: HAProxyBackendRequestQueued
       expr: >-
-        sum by (backend) (haproxy_backend_current_queue) > 10
+        sum by (backend, label_app_kubernetes_io_owner) (haproxy:haproxy_backend_current_queue:labeled) > 10
       for: 2m
       labels:
         severity: warning
@@ -71,7 +162,7 @@ spec:
     # No. of Request in Backend Queue | Critical
     - alert: HAProxyBackendRequestQueued
       expr: >-
-        sum by (backend) (haproxy_backend_current_queue) > 100
+        sum by (backend, label_app_kubernetes_io_owner) (haproxy:haproxy_backend_current_queue:labeled) > 100
       for: 2m
       labels:
         severity: critical
@@ -82,7 +173,7 @@ spec:
     # Average Time Spent in Backend Queue | Warning
     - alert: HAProxyBackendRequestQueuedTime
       expr: >-
-        sum by (backend) (haproxy_backend_http_queue_time_average_seconds) > 0.1
+        haproxy:http_backend_queue_time_seconds_bucket:histogram_quantile > 0.1
       for: 2m
       labels:
         severity: warning
@@ -93,7 +184,7 @@ spec:
     # Average Time Spent in Backend Queue | Critical
     - alert: HAProxyBackendRequestQueuedTime
       expr: >-
-        sum by (backend) (haproxy_backend_http_queue_time_average_seconds) > 0.5
+        haproxy:http_backend_queue_time_seconds_bucket:histogram_quantile > 0.5
       for: 2m
       labels:
         severity: critical
@@ -104,8 +195,7 @@ spec:
     # Average Backend Response Time | Warning
     - alert: HAProxyBackendResponseTime
       expr: >-
-        sum by (backend) (delta(haproxy_backend_http_response_time_average_seconds[1m])*100) > 5
-        or haproxy_backend_http_response_time_average_seconds > 0.5
+        haproxy:http_backend_response_wait_seconds_bucket:histogram_quantile > 0.5
       for: 5m
       labels:
         severity: warning
@@ -116,8 +206,7 @@ spec:
     # Average Backend Response Time | Critical
     - alert: HAProxyBackendResponseTime
       expr: >-
-        sum by (backend) (delta(haproxy_backend_http_response_time_average_seconds[1m])*100) > 10
-        or sum by (backend) (haproxy_backend_http_response_time_average_seconds) > 1
+        haproxy:http_backend_response_wait_seconds_bucket:histogram_quantile > 1
       for: 5m
       labels:
         severity: critical
@@ -128,7 +217,7 @@ spec:
     # No. of Backend Response Errors | Warning
     - alert: HAProxyBackendResponseErrors
       expr: >-
-        sum by (backend) (rate(haproxy_backend_response_errors_total[1m])) > 1
+        sum by (backend, label_app_kubernetes_io_owner) (rate(haproxy:haproxy_backend_response_errors_total:labeled[1m])) > 1
       for: 2m
       labels:
         severity: warning
@@ -139,7 +228,7 @@ spec:
     # No. of Backend Response Errors | Critical
     - alert: HAProxyBackendResponseErrors
       expr: >-
-        sum by (backend) (rate(haproxy_backend_response_errors_total[1m])) > 10
+        sum by (backend, label_app_kubernetes_io_owner) (rate(haproxy:haproxy_backend_response_errors_total:labeled[1m])) > 10
       for: 2m
       labels:
         severity: critical
@@ -151,9 +240,9 @@ spec:
     - alert: HAProxyBackendResponseErrors5xx
       expr: >-
         (
-          sum by (backend) (rate(haproxy_backend_http_responses_total{code=~"5..", backend!~"^error.+|^stats$"}[1m]))
+          sum by (backend, label_app_kubernetes_io_owner) (rate(haproxy:haproxy_backend_http_responses_total:labeled{code=~"5.."}[1m]))
           /
-          sum by (backend) (rate(haproxy_backend_http_responses_total{code!~"3..", backend!~"^error.+|^stats$"}[1m]))
+          sum by (backend, label_app_kubernetes_io_owner) (rate(haproxy:haproxy_backend_http_responses_total:labeled[1m]))
         )
         * 100 > 1
       for: 5m
@@ -167,9 +256,9 @@ spec:
     - alert: HAProxyBackendResponseErrors5xx
       expr: >-
         (
-          sum by (backend) (rate(haproxy_backend_http_responses_total{code=~"5..", backend!~"^error.+|^stats$"}[1m]))
+          sum by (backend, label_app_kubernetes_io_owner) (rate(haproxy:haproxy_backend_http_responses_total:labeled{code=~"5.."}[1m]))
           /
-          sum by (backend) (rate(haproxy_backend_http_responses_total{code!~"3..", backend!~"^error.+|^stats$"}[1m]))
+          sum by (backend, label_app_kubernetes_io_owner) (rate(haproxy:haproxy_backend_http_responses_total:labeled[1m]))
         )
         * 100 > 10
       for: 5m
@@ -181,7 +270,7 @@ spec:
 
     # Alert if a backend service is down for > 1m
     - alert: HAProxyBackendDown
-      expr: haproxy_backend_up == 0
+      expr: sum by (backend, label_app_kubernetes_io_owner) (haproxy:haproxy_backend_up:labeled) == 0
       for: 1m
       labels:
         severity: critical
